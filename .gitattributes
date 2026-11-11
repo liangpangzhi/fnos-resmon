@@ -1,0 +1,8 @@
+# 统一以 LF 入库：cmd/ 下的 bash 脚本若带 CRLF，在 NAS 上会报 bad interpreter
+* text=auto eol=lf
+
+*.png binary
+*.PNG binary
+*.whl binary
+*.fpk binary
+*.tgz binary

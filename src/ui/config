@@ -1,0 +1,18 @@
+{
+    ".url": {
+        "fnos-resmon.Application": {
+            "title": "飞牛资源监控",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "protocol": "",
+            "port": "",
+            "url": "/app/fnos-resmon",
+            "gatewaySocket": "app.sock",
+            "gatewayPrefix": "/app/fnos-resmon",
+            "allUsers": false,
+            "control": {
+                "accessPerm": "editable"
+            }
+        }
+    }
+}

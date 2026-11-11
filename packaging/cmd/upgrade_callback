@@ -1,0 +1,13 @@
+#!/bin/bash
+APP_BASE="/var/apps/${TRIM_APPNAME:-fnos-resmon}"
+APP_DEST="${TRIM_APPDEST}"
+VAR_DIR="${TRIM_PKGVAR}"
+
+# 刷新运行期解压的依赖（版本可能随包升级）
+rm -rf "${VAR_DIR}/lib/psutil" 2>/dev/null
+
+if [ -d "${APP_DEST}/ui" ]; then
+    ln -sfn "${APP_DEST}/ui" "${APP_BASE}/ui" 2>/dev/null || true
+fi
+echo "fnos-resmon 已升级，运行数据保留在 ${VAR_DIR}"
+exit 0

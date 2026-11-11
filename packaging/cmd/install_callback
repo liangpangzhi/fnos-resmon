@@ -1,0 +1,24 @@
+#!/bin/bash
+# ============================================================
+# fnos-resmon 安装后置处理
+# 1) 创建桌面 UI 软链接（fnOS 不会自动把 ui 解压到 /var/apps）
+# 2) 初始化应用数据目录
+# 3) 复检内置依赖 wheel
+# ============================================================
+APP_BASE="/var/apps/${TRIM_APPNAME:-fnos-resmon}"
+APP_DEST="${TRIM_APPDEST}"
+VAR_DIR="${TRIM_PKGVAR}"
+
+mkdir -p "${VAR_DIR}/lib" 2>/dev/null || true
+
+if [ -d "${APP_DEST}/ui" ] && [ ! -e "${APP_BASE}/ui" ]; then
+    ln -s "${APP_DEST}/ui" "${APP_BASE}/ui" 2>/dev/null && echo "已创建 UI 软链接" || true
+fi
+
+if ! ls "${APP_DEST}"/py/wheels/psutil-*.whl >/dev/null 2>&1; then
+    echo "警告：未找到内置 psutil wheel，应用可能无法启动" > "$TRIM_TEMP_LOGFILE"
+fi
+
+chmod 700 "${VAR_DIR}" 2>/dev/null || true
+echo "fnos-resmon 安装完成，应用数据目录: ${VAR_DIR}"
+exit 0

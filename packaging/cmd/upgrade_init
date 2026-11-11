@@ -1,0 +1,18 @@
+#!/bin/bash
+# 停止运行中的 resmon 进程（升级/卸载前）
+APP_DEST="${TRIM_APPDEST}"
+VAR_DIR="${TRIM_PKGVAR}"
+PIDF="${VAR_DIR}/app.pid"
+if [ -f "$PIDF" ]; then
+    pid=$(tr -d '[:space:]' < "$PIDF")
+    case "$pid" in
+        ''|*[!0-9]*) : ;;
+        *) kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null ;;
+    esac
+    rm -f "$PIDF"
+fi
+# 兜底清理本应用残留进程（严格匹配本应用目录，避免误杀其他 python 应用）
+if [ -n "$APP_DEST" ] && command -v pkill >/dev/null 2>&1; then
+    pkill -f "${APP_DEST}/app.py" 2>/dev/null
+fi
+exit 0

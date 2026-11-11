@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>飞牛资源管理器</title>
+<script>
+/* 飞牛桌面内嵌打开时地址为 /app/fnos-resmon/，页面内 fetch('/api/...') 是根绝对路径，
+   会被浏览器发到站点根而绕过应用前缀；这里把根绝对路径自动补上当前应用前缀。
+   直接以端口访问（location.pathname 为 /）时不加前缀，行为不变。 */
+(function(){
+  var base = location.pathname || "/";
+  if (base.charAt(base.length - 1) !== "/") base += "/";
+  base = base.replace(/\/+$/, "");
+  if (!base) return;
+  var orig = window.fetch;
+  window.fetch = function(input, init){
+    try{
+      if (typeof input === "string" && input.charAt(0) === "/" && input.indexOf("//") !== 0
+          && input.indexOf(base + "/") !== 0 && input !== base){
+        input = base + input;
+      }
+    }catch(e){}
+    return orig.call(window, input, init);
+  };
+})();
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{min-height:100%;overflow-x:hidden;overflow-y:auto}
+/* 滚动条：飞牛桌面内嵌窗口较矮，保证可滚动且滚动条可见、易拖拽 */
+html{scrollbar-width:thin;scrollbar-color:#c8c8c8 transparent}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#c8c8c8;border-radius:6px;border:2px solid #fff}
+::-webkit-scrollbar-thumb:hover{background:#a8a8a8}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:#fff;color:#333;font-size:14px;display:flex;flex-direction:column}
+.scrollarea{flex:1 0 auto;overflow:visible;min-height:0}
+.tabs{display:flex;border-bottom:1px solid #eee;padding:0 16px;position:sticky;top:0;background:#fff;z-index:60}
+.tab{padding:12px 18px;cursor:pointer;color:#333;font-size:15px;position:relative}
+.tab.active{color:#20a53a}
+.tab.active:after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;background:#20a53a}
+.card{border:1px solid #eee;border-radius:4px;margin:14px 16px;display:flex;text-align:center}
+.stat{flex:1;padding:16px 8px}
+.stat+.stat{border-left:1px solid #f2f2f2}
+.stat .k{font-weight:700;margin-bottom:8px;font-size:14px}
+.stat .v{font-size:15px}
+.v.green{color:#20a53a}
+table{width:calc(100% - 32px);margin:0 16px 20px;border-collapse:collapse;font-size:13px;table-layout:fixed}
+thead th{background:#f7f7f7;color:#555;font-weight:400;text-align:left;padding:10px 8px;white-space:nowrap;overflow:hidden}thead th[onclick]{cursor:pointer;user-select:none}thead th[onclick]:hover{color:#20a53a}
+tbody td{padding:9px 8px;border-bottom:1px solid #f2f2f2;vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+tbody td.desc{max-width:340px}
+a.proc{color:#20a53a;text-decoration:none;white-space:nowrap}
+col.c-name{width:150px}col.c-num{width:90px}col.c-pid{width:80px}col.c-user{width:110px}col.c-st{width:60px}col.c-op{width:60px}
+.st-sleep{color:#ff9900}.st-run{color:#20a53a}
+.kill{color:#20a53a;cursor:pointer;background:none;border:none;font-size:13px}
+.kill:hover{text-decoration:underline}
+.bigbtn{background:linear-gradient(180deg,#1f9d55,#157347);border:none;color:#fff;font-size:18px;font-weight:700;border-radius:10px;padding:14px 28px;cursor:pointer;box-shadow:0 4px 14px rgba(31,157,85,.4);display:inline-block;margin:6px 0}
+.bigbtn:hover{filter:brightness(1.1)}
+.bigbtn:active{transform:scale(.97)}
+.num{font-variant-numeric:tabular-nums}
+.bar{height:8px;background:#f0f0f0;border-radius:4px;overflow:hidden;margin-top:6px}
+.bar>i{display:block;height:100%;background:#20a53a;border-radius:4px}
+.diskrow{margin:14px 16px;border:1px solid #eee;border-radius:4px;padding:14px 16px}
+.diskrow .t{font-weight:700;margin-bottom:6px}
+.mut{color:#999;font-size:12px}
+.toolbar{margin:0 16px 10px;color:#999;font-size:12px;display:flex;justify-content:space-between}
+button.refresh{background:#20a53a;color:#fff;border:none;border-radius:3px;padding:5px 14px;cursor:pointer}
+.cpuinfo{margin:0 16px 12px;border:1px solid #eee;border-radius:4px;padding:12px 16px;font-size:13px;line-height:1.9;color:#333}
+.cpuinfo .model{font-weight:700;font-size:14px;margin-bottom:4px}
+.cpuinfo .mut{color:#999;font-size:12px}
+.corebar{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.corecell{flex:1;min-width:44px;text-align:center}
+.corecell .cb{height:8px;background:#f0f0f0;border-radius:4px;overflow:hidden}
+.corecell .cb>i{display:block;height:100%;background:#20a53a;border-radius:4px}
+.corecell .ct{font-size:11px;color:#999;margin-top:2px;font-variant-numeric:tabular-nums}
+.perfbtn{border:1px solid #ddd;background:#fff;border-radius:6px;padding:8px 18px;font-size:14px;cursor:pointer;margin-right:8px}
+.perfbtn.cur{background:#20a53a;border-color:#20a53a;color:#fff;font-weight:700}
+.benchbtn{border:1px solid #20a53a;background:#20a53a;color:#fff;border-radius:6px;padding:8px 18px;font-size:14px;cursor:pointer}
+.benchbtn:disabled{background:#ccc;border-color:#ccc;cursor:wait}
+.benchhist{font-size:12px;color:#666;line-height:1.8;margin-top:4px}
+#cpu4row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:0 16px 12px}
+#cpu4row .cpuinfo{margin:0;min-width:0;overflow:hidden}
+#cpu4row .bigbtn{font-size:15px;padding:10px 18px}
+#cpu4row .perfbtn{padding:6px 12px;font-size:13px;margin:0 6px 6px 0}
+#cpu4row .benchbtn{padding:6px 12px;font-size:13px}
+@media(max-width:1400px){#cpu4row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:800px){#cpu4row{grid-template-columns:minmax(0,1fr)}}
+</style>
+</head>
+<body>
+<div id="loginMask" style="display:none;position:fixed;inset:0;background:rgba(255,255,255,.97);z-index:4000;align-items:center;justify-content:center;flex-direction:column">
+<div style="width:320px;max-width:88vw;background:#fff;border:1px solid #eee;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.10);padding:28px 26px">
+<div style="text-align:center;margin-bottom:18px">
+<div style="font-size:19px;font-weight:700">🐴 飞牛资源管理器</div>
+<div style="color:#999;font-size:13px;margin-top:6px">此面板已开启密码保护</div>
+</div>
+<input id="loginPwd" type="password" placeholder="请输入访问密码" autocomplete="current-password" style="width:100%;padding:11px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;box-sizing:border-box;outline:none">
+<div id="loginErr" style="color:#e33;font-size:12px;min-height:16px;margin-top:7px"></div>
+<button id="loginBtn" onclick="doLogin()" style="width:100%;margin-top:4px;background:#20a53a;color:#fff;border:none;border-radius:8px;padding:11px;font-size:15px;font-weight:700;cursor:pointer">登 录</button>
+<div style="color:#999;font-size:11px;margin-top:14px;text-align:center;line-height:1.7">登录后 48 小时内免再次输入<br>密码保存在服务器配置文件中</div>
+</div>
+</div>
+<div class="tabs">
+<div class="tab active" data-t="cpu">CPU</div>
+<div class="tab" data-t="mem">内存</div>
+<div class="tab" data-t="disk">磁盘</div>
+<div class="tab" data-t="net">网络</div>
+<div style="margin-left:auto;display:flex;align-items:center;gap:12px;padding-right:16px;font-size:12px">
+<span id="licBell" onclick="toggleAnn()" title="公告" style="cursor:pointer;position:relative;font-size:15px">🔔<i id="licDot" style="display:none;position:absolute;top:-2px;right:-4px;width:8px;height:8px;border-radius:50%;background:#f00"></i></span>
+<span id="licVer" onclick="checkVer(true)" title="点击检查新版本" style="color:#999;cursor:pointer">v1.3.22</span>
+<label style="color:#999">刷新 <select id="ival" onchange="setIval(this.value)" style="border:1px solid #ddd;border-radius:3px;padding:2px 4px;color:#333"><option value="3">3s</option><option value="5">5s</option><option value="10">10s</option><option value="30">30s</option><option value="60">60s</option></select></label>
+<button id="pauseBtn" onclick="togglePause()" style="background:#ff9900;color:#fff;border:none;border-radius:3px;padding:3px 10px;cursor:pointer">⏸ 停止刷新</button>
+<a href="https://nav.88531.cn" target="_blank" style="color:#20a53a;text-decoration:none">资享导航站</a>
+<a href="https://gitea.88531.cn/jinghui/fnos-resmon" target="_blank" style="color:#20a53a;text-decoration:none">开源地址</a>
+</div>
+</div>
+<div class="card" id="summary"></div>
+<div class="cpuinfo" id="cpuinfo" style="display:none"></div>
+<div id="cpu4row"><div class="cpuinfo" id="cpuperf" style="display:none"></div>
+<div class="cpuinfo" id="cpubench" style="display:none"></div>
+<div class="cpuinfo" id="cpusensor" style="display:none"></div>
+<div class="cpuinfo" id="cpuadvise" style="display:none"></div></div>
+<div class="cpuinfo" id="meminfo" style="display:none"></div>
+<div class="cpuinfo" id="membench" style="display:none"></div>
+<div class="cpuinfo" id="diskinfo" style="display:none"></div>
+<div class="cpuinfo" id="diskbench" style="display:none"></div>
+<div class="cpuinfo" id="netinfo" style="display:none"></div>
+<div class="cpuinfo" id="netbench" style="display:none"></div>
+<div class="toolbar"><span id="sub"></span><span><span id="ts" style="margin-right:10px"></span><button class="refresh" onclick="load(true)">刷新</button></span></div>
+<div class="scrollarea"><table>
+<thead id="thead"></thead>
+<tbody id="tbody"></tbody>
+</table>
+<div id="disks"></div><div id="netextra"></div></div>
+<div id="annPanel" style="display:none;position:fixed;top:46px;right:12px;width:340px;max-height:60vh;overflow:auto;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:1000;padding:12px 14px;font-size:13px;line-height:1.8"></div>
+<div id="annPop" style="display:none;position:fixed;right:12px;bottom:40px;width:340px;background:#fffbe6;border:1px solid #f0c36d;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.15);z-index:1000;padding:12px 14px;font-size:13px;line-height:1.8"></div>
+<script>
+let LIC={announcements:[],popup:[]};
+let cur='cpu';
+let sortState={key:null,dir:-1};
+function loadSort(){try{const v=JSON.parse(localStorage.getItem('fnos_sort_'+cur)||'null');if(v&&v.key){sortState=v;return}}catch(e){}sortState={key:null,dir:-1};}
+function saveSort(){try{localStorage.setItem('fnos_sort_'+cur,JSON.stringify(sortState))}catch(e){}}
+loadSort();
+let curData=null;
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{try{window.scrollTo(0,0)}catch(e){}document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));t.classList.add('active');cur=t.dataset.t;loadSort();document.getElementById('disks').innerHTML='';const ci=document.getElementById('cpuinfo');if(ci)ci.style.display='none';const cs=document.getElementById('cpusensor');if(cs)cs.style.display='none';const ca=document.getElementById('cpuadvise');if(ca)ca.style.display='none';const cp=document.getElementById('cpuperf');if(cp)cp.style.display='none';const mi2=document.getElementById('meminfo');if(mi2)mi2.style.display='none';const di=document.getElementById('diskinfo');if(di)di.style.display='none';const ni=document.getElementById('netinfo');if(ni)ni.style.display='none';['cpubench','membench','diskbench','netbench'].forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none'});load(true)});
+function fmtB(b){if(b==null)return '-';const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=1024;i++}return b.toFixed(b>=100?0:1)+u[i]}
+function fmtR(b){return fmtB(b)+'/s'}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+async function dropMem(){if(!confirm('一键回收未使用的内存（drop caches）？'))return;const r=await fetch('/api/mem/drop',{method:'POST'});const j=await r.json();alert(j.ok?('已回收，可用 '+fmtB(j.available)):('失败: '+j.error));load(true)}
+let optPoll=null;
+let optState={running:false,text:''};
+function restoreOptUI(){const b=document.getElementById('optBtn');const st=document.getElementById('optStopBtn');const s=document.getElementById('optStatus');if(!b||!st||!s)return;if(optState.running){b.disabled=true;b.style.cssText='background:#ccc;color:#fff;border:none;border-radius:3px;padding:6px 14px;cursor:not-allowed';st.style.display='';}else{st.style.display='none';}if(optState.text)s.textContent=optState.text;}
+async function optimizeSys(){const b=document.getElementById('optBtn');const st=document.getElementById('optStopBtn');if(!b||b.disabled)return;try{const r=await fetch('/api/sys/optimize',{method:'POST'});const j=await r.json();if(r.status===409&&j.running){return}if(!j.started&&!j.ok){const s=document.getElementById('optStatus');if(s)s.textContent='启动失败，请稍后重试';return}b.disabled=true;b.style.cssText='background:#ccc;color:#fff;border:none;border-radius:3px;padding:6px 14px;cursor:not-allowed';const s=document.getElementById('optStatus');optState={running:true,text:'⏳ 正在优化系统，预计约20秒，页面数据照常刷新…'};if(s)s.textContent=optState.text;if(st)st.style.display='';if(optPoll)clearInterval(optPoll);optPoll=setInterval(pollOptStatus,2000)}catch(e){const s=document.getElementById('optStatus');if(s)s.textContent='启动失败：网络异常'}}
+async function stopOpt(){let j=null;try{const r=await fetch('/api/sys/optimize/cancel',{method:'POST'});j=await r.json()}catch(e){}if(!j||!j.ok)return;const st=document.getElementById('optStopBtn');if(st)st.disabled=true;optState={running:true,stopping:true,text:'⏳ 正在停止优化…'};const s=document.getElementById('optStatus');if(s)s.textContent=optState.text}
+async function pollOptStatus(){try{const r=await fetch('/api/sys/optimize/status');const j=await r.json();const s=document.getElementById('optStatus');if(j.running){optState={running:true,stopping:!!optState.stopping,text:optState.stopping?'⏳ 正在停止优化…（已用时 '+j.elapsed+' 秒）':'⏳ 正在优化系统，已用时 '+j.elapsed+' 秒，预计约20秒，页面数据照常刷新…'};if(s)s.textContent=optState.text;return}if(optPoll){clearInterval(optPoll);optPoll=null}const b=document.getElementById('optBtn');const st=document.getElementById('optStopBtn');if(b){b.disabled=false;b.style.cssText='';b.className='bigbtn'}if(st){st.style.display='none';st.disabled=false}if(j.cancelled){optState={running:false,text:'⏹ 已停止优化：'+j.steps.join('；')}}else if(j.done){optState={running:false,text:'✅ 优化完成：'+j.steps.join('；')+'，释放 '+fmtB(j.freed)+'，当前可用 '+fmtB(j.available)}}if(s&&optState.text)s.textContent=optState.text;load(true);setTimeout(restoreOptUI,500)}catch(e){}}
+let lastAdvise=0;
+async function cpuSensor(){const el=document.getElementById('cpusensor');try{const r=await fetch('/api/sensors');const j=await r.json();el.style.display='';let h='<div class="model">🌡️ 温度 / 🌀 风扇</div>';if(j.temps&&j.temps.length){const cpu=j.temps.filter(t=>t.name.indexOf('CPU')===0);const oth=j.temps.filter(t=>t.name.indexOf('CPU')!==0);const chip=t=>{const c=t.value>=85?'#f00':(t.value>=70?'#ff9900':'#20a53a');return `<span style="display:inline-block;margin:2px 10px 2px 0">${esc(t.name)} <b style="color:${c}">${t.value}°C</b></span>`};if(cpu.length)h+='<div>'+cpu.map(chip).join('')+'</div>';if(oth.length)h+='<div class="mut">'+oth.map(chip).join('')+'</div>'}if(j.fans&&j.fans.length){h+='<div>'+j.fans.map(f=>`<span style="display:inline-block;margin:2px 10px 2px 0">🌀 ${esc(f.name)} <b>${f.value} RPM</b></span>`).join('')+'</div>'}else{h+='<div class="mut">🌀 风扇转速：宿主未暴露（家用 NAS/主板多无此传感器，属正常）</div>'}if(j.note&&!j.temps.length)h+=`<div class="mut">${esc(j.note)}</div>`;el.innerHTML=h}catch(e){el.style.display='';el.innerHTML='<div class="mut">🌡️ 温度读取失败</div>'}}
+async function cpuAdvise(){const el=document.getElementById('cpuadvise');const now=Date.now();if(now-lastAdvise<15000){if(el.innerHTML)el.style.display='';return;}lastAdvise=now;try{const r=await fetch('/api/cpu/advise');const j=await r.json();const col=j.level==='轻松'||j.level==='正常'?'#20a53a':(j.level==='偏高'?'#ff9900':'#f00');document.getElementById('cpuadvise').style.display='';document.getElementById('cpuadvise').innerHTML=`<div class="model">📊 负载诊断：<b style="color:${col}">${j.level}</b> <span class="mut">（1分钟负载 ${j.load[0]} ÷ ${j.logical}核 = 单核 ${j.per_core}）</span></div><div style="margin:4px 0">${esc(j.verdict)}</div><div class="mut">如何更流畅：</div><div>${j.tips.map(t=>`<div>· ${esc(t)}</div>`).join('')}</div><div style="margin-top:6px"><button class="bigbtn" id="optBtn" onclick="optimizeSys()">🚀 一键优化系统</button> <button id="optStopBtn" onclick="stopOpt()" style="display:none;background:#f00;color:#fff;border:none;border-radius:3px;padding:6px 14px;cursor:pointer">⏹ 停止</button><div class="mut" id="optDesc" style="margin-top:4px">会做两件事：① 把内存里暂存的数据写回硬盘（sync，防断电丢数据）；② 回收系统缓存占用的内存（drop caches，只清缓存、不动正在运行的程序）。全程不重启、不杀进程，页面照常刷新。</div><div class="mut" id="optStatus"></div></div>`;restoreOptUI()}catch(e){}}
+async function kill(pid,name){if(!confirm('结束进程 '+name+' (PID '+pid+') ?'))return;const r=await fetch('/api/kill',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pid})});const j=await r.json();alert(j.ok?'已发送结束信号':('失败: '+j.error));load(true)}
+const PERF_DESC={powersave:'省电模式：限制睿频、能效优先，适合7×24待机/下载机，功耗噪音最低。可选硬上限频率锁住最高MHz',balanced:'平衡模式：按负载自动升降频，日常使用推荐，性能功耗兼顾',performance:'高性能模式：火力全开，适合转码/编译/虚拟机等重负载，功耗温度最高'};
+let perfCur='';
+async function cpuPerf(){const el=document.getElementById('cpuperf');try{const r=await fetch('/api/cpu/perf');const j=await r.json();const m=j.mode||j.saved||'balanced';const capMax=j.cap_max_mhz||0,hwMax=j.hw_max_mhz||0;const key=m+'|'+(j.governor||'')+'|'+(j.epp||'')+'|'+capMax;if(perfCur===key&&el.innerHTML){el.style.display='';return;}perfCur=key;el.style.display='';const capTxt=hwMax?((j.capped||(capMax&&capMax<hwMax))?`🔒 硬上限 ${capMax}MHz（满血 ${hwMax}MHz）`:`上限满血 ${hwMax}MHz`):'';el.innerHTML=`<div class="model">⚡ 系统性能：<b>${m==='powersave'?'省电模式':m==='performance'?'高性能模式':'平衡模式'}</b> <span class="mut">（governor=${esc(j.governor||'-')} epp=${esc(j.epp||'-')} ${capTxt}，不重启电脑）</span></div><div style="margin-top:6px">${['powersave','balanced','performance'].map(k=>`<button class="perfbtn${m===k?' cur':''}" onclick="setPerf('${k}')">${k==='powersave'?'🌱 省电模式':k==='balanced'?'⚖️ 平衡模式':'🔥 高性能模式'}</button>`).join('')}</div>${m==='powersave'?`<div style="margin-top:6px">🔒 硬上限频率：<select id="capSel"><option value="0">不限（默认，只调 governor+EPP）</option><option value="2393"${capMax===2393?' selected':''}>2.4GHz 最省电</option><option value="3000"${capMax===3000?' selected':''}>3.0GHz 兼顾</option><option value="3800"${capMax===3800?' selected':''}>3.8GHz 轻封顶</option></select> <button class="perfbtn" onclick="setPerfCap()">应用上限</button> <span class="mut">（写 scaling_max_freq，立即生效；切平衡/高性能自动恢复满血；用 CPU 测速验证是否压住）</span></div>`:''}<div class="mut" style="margin-top:6px">${PERF_DESC[m]||''}</div><div id="perfMsg" class="mut" style="margin-top:4px"></div>`}catch(e){}}
+async function setPerf(mode){const msg=document.getElementById('perfMsg');if(msg)msg.textContent='⏳ 正在切换…';let cap=0;if(mode==='powersave'){const s=document.getElementById('capSel');if(s)cap=parseInt(s.value||'0',10)||0}try{const r=await fetch('/api/cpu/perf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode,cap_mhz:cap})});const j=await r.json();if(!j.ok){if(msg)msg.textContent='❌ 切换失败：'+(j.error||'未知错误');else alert('切换失败: '+(j.error||'未知'));return}perfCur='';cpuPerf()}catch(e){if(msg)msg.textContent='❌ 切换失败：网络错误'}}
+async function setPerfCap(){const s=document.getElementById('capSel');const cap=s?parseInt(s.value||'0',10)||0:0;const msg=document.getElementById('perfMsg');if(msg)msg.textContent='⏳ 正在设置硬上限…';try{const r=await fetch('/api/cpu/perf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'powersave',cap_mhz:cap})});const j=await r.json();if(!j.ok){if(msg)msg.textContent='❌ 设置失败：'+(j.error||'未知错误');return}perfCur='';await cpuPerf();const m2=document.getElementById('perfMsg');if(m2)m2.textContent=(cap?`✅ 已锁上限 ${cap}MHz（${j.cap_ok||0}核生效），跑一遍 CPU 测速验证`:'✅ 已恢复满血（不限上限）')}catch(e){if(msg)msg.textContent='❌ 设置失败：网络错误'}}
+function cmpVal(p,key){
+ if(key==='name')return String(p.name||'');
+ if(key==='desc')return String(p.desc||'');
+ if(key==='user')return String(p.user||'');
+ if(key==='status')return String(p.status||'');
+ if(key==='cpu')return Number(p.cpu||0);
+ if(key==='threads')return Number(p.threads||0);
+ if(key==='mem')return Number(p.mem||0);
+ if(key==='rss')return Number(p.rss||0);
+ if(key==='uss')return Number(p.uss||0);
+ if(key==='swap')return Number(p.swap||0);
+ if(key==='pid')return Number(p.pid||0);
+ if(key==='io_r')return Number(p.io_r||0);
+ if(key==='io_w')return Number(p.io_w||0);
+ if(key==='conns')return Number(p.conns||0);
+ return 0;
+}
+function renderBody(){
+ const B=document.getElementById('tbody');
+ if(!curData||!curData.items)return;
+ let items=curData.items.slice();
+ if(sortState.key){
+  items.sort((a,b)=>{
+   const va=cmpVal(a,sortState.key),vb=cmpVal(b,sortState.key);
+   if(typeof va==='string')return sortState.dir*va.localeCompare(vb);
+   return sortState.dir*(va-vb);
+  });
+ }
+ if(cur==='cpu') B.innerHTML=items.map(p=>`<tr><td><a class="proc">${esc(p.name)}</a></td><td class="num">${p.cpu}</td><td class="num">${p.threads}</td><td class="num">${p.pid}</td><td>${esc(p.desc)}</td><td>${esc(p.user)}</td><td class="${p.active?'st-run':'st-sleep'}">${p.status}</td><td><button class="kill" onclick="kill(${p.pid},'${esc(p.name)}')">结束</button></td></tr>`).join('');
+ else if(cur==='mem') B.innerHTML=items.map(p=>`<tr><td><a class="proc">${esc(p.name)}</a></td><td class="num">${fmtB(p.rss)}</td><td class="num">${fmtB(p.uss)}</td><td class="num">${fmtB(p.swap)}</td><td class="num">${p.pid}</td><td>${esc(p.desc)}</td><td>${esc(p.user)}</td><td class="${p.active?'st-run':'st-sleep'}">${p.status}</td><td><button class="kill" onclick="kill(${p.pid},'${esc(p.name)}')">结束</button></td></tr>`).join('');
+ else if(cur==='disk') B.innerHTML=items.map(p=>`<tr><td><a class="proc">${esc(p.name)}</a></td><td class="num">${fmtB(p.io_r)}</td><td class="num">${fmtB(p.io_w)}</td><td class="num">${p.pid}</td><td>${esc(p.user)}</td><td class="${p.active?'st-run':'st-sleep'}">${p.status}</td><td><button class="kill" onclick="kill(${p.pid},'${esc(p.name)}')">结束</button></td></tr>`).join('');
+ else if(cur==='net') B.innerHTML=items.map(p=>`<tr><td><a class="proc">${esc(p.name)}</a></td><td class="num">${p.conns}</td><td class="num">${p.pid}</td><td>${esc(p.desc)}</td><td>${esc(p.user)}</td><td class="${p.active?'st-run':'st-sleep'}">${p.status}</td><td><button class="kill" onclick="kill(${p.pid},'${esc(p.name)}')">结束</button></td></tr>`).join('');
+}
+function arrow(k){if(sortState.key!==k)return ' ▼';return sortState.dir>0?' ▲':' ▼'}
+function renderHeader(){
+ const H=document.getElementById('thead');
+ if(cur==='cpu') H.innerHTML=`<tr><th onclick="sortBy('name')">进程名${arrow('name')}</th><th onclick="sortBy('cpu')">CPU使用率(%)${arrow('cpu')}</th><th onclick="sortBy('threads')">线程数${arrow('threads')}</th><th onclick="sortBy('pid')">PID${arrow('pid')}</th><th onclick="sortBy('desc')">描述${arrow('desc')}</th><th onclick="sortBy('user')">用户${arrow('user')}</th><th onclick="sortBy('status')">状态${arrow('status')}</th><th>操作</th></tr>`;
+ else if(cur==='mem') H.innerHTML=`<tr><th onclick="sortBy('name')">进程名${arrow('name')}</th><th onclick="sortBy('rss')">RSS${arrow('rss')}</th><th onclick="sortBy('uss')">USS${arrow('uss')}</th><th onclick="sortBy('swap')">SWAP${arrow('swap')}</th><th onclick="sortBy('pid')">PID${arrow('pid')}</th><th onclick="sortBy('desc')">描述${arrow('desc')}</th><th onclick="sortBy('user')">用户${arrow('user')}</th><th onclick="sortBy('status')">状态${arrow('status')}</th><th>操作</th></tr>`;
+ else if(cur==='disk') H.innerHTML=`<tr><th onclick="sortBy('name')">进程名${arrow('name')}</th><th onclick="sortBy('io_r')">读累计${arrow('io_r')}</th><th onclick="sortBy('io_w')">写累计${arrow('io_w')}</th><th onclick="sortBy('pid')">PID${arrow('pid')}</th><th onclick="sortBy('user')">用户${arrow('user')}</th><th onclick="sortBy('status')">状态${arrow('status')}</th><th>操作</th></tr>`;
+ else if(cur==='net') H.innerHTML=`<tr><th onclick="sortBy('name')">进程名${arrow('name')}</th><th onclick="sortBy('conns')">连接数${arrow('conns')}</th><th onclick="sortBy('pid')">PID${arrow('pid')}</th><th onclick="sortBy('desc')">描述${arrow('desc')}</th><th onclick="sortBy('user')">用户${arrow('user')}</th><th onclick="sortBy('status')">状态${arrow('status')}</th><th>操作</th></tr>`;
+}
+function sortBy(key){
+ if(sortState.key===key) sortState.dir*=-1; else {sortState.key=key;sortState.dir=-1;}
+ saveSort();renderHeader(); renderBody();
+}
+async function load(manual){
+document.getElementById('disks').innerHTML='';
+document.getElementById('netextra').innerHTML='';
+try{
+const r=await fetch('/api/'+cur,{cache:'no-store'});if(r.status===401){showLogin('登录已过期，请重新登录');return}const j=await r.json();
+curData=j;
+document.getElementById('ts').textContent='更新于 '+new Date().toLocaleTimeString();
+const S=document.getElementById('summary'),H=document.getElementById('thead'),B=document.getElementById('tbody');
+if(cur==='cpu'){
+S.innerHTML=`<div class="stat"><div class="k">CPU占用</div><div class="v green">${j.cpu}%</div></div><div class="stat"><div class="k">活跃进程数</div><div class="v green">${j.active}</div></div><div class="stat"><div class="k">负载(1分钟,5分钟,15分钟)</div><div class="v num">${j.load.join(', ')}</div></div>`;
+const I=j.info||{},P=j.percpu||[],MHZ=j.mhz||[];
+document.getElementById('cpuinfo').style.display='';
+document.getElementById('cpuinfo').innerHTML=`<div class="model">${esc(I.model||'未知CPU')} <span class="mut">${esc(I.arch||'')}</span></div><div>物理 ${I.physical||'-'} 核 / 逻辑 ${I.logical||'-'} 核 · ${I.sockets?('共 '+I.sockets+' 路 × '+I.cores_per_socket+'核 × '+I.threads_per_core+'线程'):''} · 当前 ${I.freq_cur||'-'} MHz（${I.freq_min||'-'} ~ ${I.freq_max||'-'} MHz）</div><div class="mut">L1d ${esc(I.l1d||'-')} · L1i ${esc(I.l1i||'-')} · L2 ${esc(I.l2||'-')} · L3 ${esc(I.l3||'-')}</div><div class="corebar">${P.map((v,i)=>`<div class="corecell"><div class="cb"><i style="width:${Math.min(v,100)}%"></i></div><div class="ct">#${i} ${v}%${MHZ[i]!=null?'<br>'+MHZ[i]+'MHz':''}</div></div>`).join('')}</div>`;
+document.getElementById('sub').textContent=`共 ${j.total} 个进程,显示占用最高的前 ${j.items.length} 个（进程CPU为单进程占用，单核满=100%，16核满=1600%，进程之和÷16≈整机占用）`;
+cpuPerf();cpuAdvise();cpuSensor();showBench('cpu');
+renderHeader();
+renderBody();
+}else if(cur==='mem'){
+S.innerHTML=`<div class="stat"><div class="k">内存占用</div><div class="v green">${j.percent}%</div></div><div class="stat"><div class="k">已用 / 总共</div><div class="v num">${fmtB(j.used)} / ${fmtB(j.total)}</div></div><div class="stat"><div class="k">可用 / Swap</div><div class="v num">${fmtB(j.available)} / ${fmtB(j.swap_used)}/${fmtB(j.swap_total)} (Swap ${j.swap_percent||0}%)</div></div><div class="stat"><div class="k">操作</div><div class="v"><button class="bigbtn" onclick="dropMem()">🧹 一键回收未使用的内存</button></div></div>`;
+const D=j.detail||{},H2=j.hw||{},DM=H2.dimms||[];
+const row=(k,v)=>`<span style="display:inline-block;min-width:230px;margin-right:12px">${k} <b class="num">${v}</b></span>`;
+document.getElementById('meminfo').style.display='';
+document.getElementById('meminfo').innerHTML=`<div class="model">物理 ${fmtB(H2.installed||0)}（${DM.length} 条） · 系统可用 ${fmtB(H2.system_total||j.total)} · 预留 ${fmtB(H2.reserved||0)}（核显 ${fmtB(H2.vram||0)} + BIOS/PCI 保留）</div>`
++(DM.length?`<div class="mut">槽位：</div><div>${DM.map(d=>row(esc((d.locator||'')+' / '+(d.bank||'')), esc(fmtB(d.size_b)+' '+d.type+' '+(d.cspeed||d.speed||'')+'MT/s '+(d.maker||'')+' '+(d.part||'')))).join('')}</div>`:`<div class="mut">未读到内存槽位表（DMI 不可用）</div>`)
++`<div class="mut">占用拆解：</div><div>${row('空闲 MemFree',fmtB(D.MemFree))+row('可用 MemAvailable',fmtB(D.MemAvailable))+row('缓冲 Buffers',fmtB(D.Buffers))+row('缓存 Cached',fmtB(D.Cached))+row('Swap缓存',fmtB(D.SwapCached))+row('匿名页 AnonPages',fmtB(D.AnonPages))+row('映射 Mapped',fmtB(D.Mapped))+row('共享 Shmem',fmtB(D.Shmem))+row('Slab',fmtB(D.Slab))+row('可回收',fmtB(D.SReclaimable))+row('不可回收',fmtB(D.SUnreclaim))+row('页表',fmtB(D.PageTables))+row('内核栈',fmtB(D.KernelStack))+row('已提交',fmtB(D.Committed_AS))+row('提交上限',fmtB(D.CommitLimit))+row('脏页',fmtB(D.Dirty))}</div>`;
+showBench('mem');
+document.getElementById('sub').textContent=`按内存占用排序,前 ${j.items.length} 个进程`;
+renderHeader();
+renderBody();
+}else if(cur==='disk'){
+let tot=0,used=0;j.parts.forEach(p=>{tot+=p.total;used+=p.used});
+const pct=tot?Math.round(used/tot*100):0;
+S.innerHTML=`<div class="stat"><div class="k">磁盘占用</div><div class="v green">${pct}%</div></div><div class="stat"><div class="k">已用 / 总共</div><div class="v num">${fmtB(used)} / ${fmtB(tot)}</div></div><div class="stat"><div class="k">读 / 写累计</div><div class="v num">${fmtB(j.io.read||0)} / ${fmtB(j.io.write||0)}</div></div>`;
+document.getElementById('sub').textContent=`${j.parts.length} 个挂载点,下表按 IO 占用排序`;
+renderHeader();
+renderBody();
+document.getElementById('disks').innerHTML=j.parts.map(p=>`<div class="diskrow"><div class="t">${esc(p.mount)} <span class="mut">${esc(p.device)} ${esc(p.fstype)}</span></div><div class="num">${fmtB(p.used)} / ${fmtB(p.total)} (${p.percent}%) · 可用 ${fmtB(p.free)}</div><div class="bar"><i style="width:${p.percent}%"></i></div></div>`).join('');
+const W=j.hw||{},DS=W.disks||[],AR=W.arrays||[],EX=W.extra||{};
+const drow=(k,v)=>`<span style="display:inline-block;min-width:250px;margin-right:12px">${k} <b class="num">${v}</b></span>`;
+document.getElementById('diskinfo').style.display='';
+document.getElementById('diskinfo').innerHTML=`<div class="model">共 ${DS.length} 块物理盘 · ${AR.length} 组阵列 <span class="mut">SMART 快照 ${esc(W.snapshot||'')}（温度/通电时间为快照值）</span></div>`
++(DS.length?DS.map(d=>`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee"><div><b>/dev/${esc(d.name||'')}</b> ${esc(d.model||d.sys_model||'')} <span class="mut">${esc(d.type||'')} · ${fmtB(d.cap_b)} · ${esc(d.iface||'')}</span> <span style="color:${String(d.health||'').includes('PASSED')?'#20a53a':'#f00'}">${esc(d.health||'')}</span></div><div>${drow('序列号',esc(d.serial||'-'))+drow('温度',d.temp_c!=null?(d.temp_c+'°C 快照'):'-')+drow('通电',d.hours!=null?(Math.floor(d.hours/24)+' 天（'+d.hours+' 小时）'):'-')+drow('通电次数',d.power_cycles!=null?d.power_cycles:'-')+drow('坏道重映射',d.realloc!=null?d.realloc:'-')+(d.wear!=null?drow('磨损',d.wear+'%'):'')+(d.helium!=null?drow('氦气',d.helium+'%'):'')+(d.rpm?drow('转速',d.rpm+' 转'):drow('转速',d.rotational?'机械':'固态'))+drow('尺寸',esc(d.form||'-'))+drow('读写累计',fmtB(d.io_read||0)+' / '+fmtB(d.io_write||0))}</div></div>`).join(''):`<div class="mut">未读到硬盘信息</div>`)
++(AR.length?`<div class="mut" style="margin-top:8px">阵列拓扑（单成员 RAID1，无冗余）：</div><div>${AR.map(a=>drow(esc(a.md+' → '+(a.mount||'')),esc((a.level||'')+' '+(a.members||'')+' '+(a.live_status||'')+' '+(a.live_devs||'')))).join('')+(AR.some(a=>a.live_sync)?`<div class="mut">${esc((AR.find(a=>a.live_sync)||{}).live_sync||'')}</div>`:''+(EX&&EX.mount?`<div>${drow('系统盘 '+esc(EX.mount||'/'),esc((EX.part||'')+'（'+(EX.note||'')+'）'))}</div>`:''))}</div>`:'')
++((W.note)?`<div class="mut">${esc(W.note)}</div>`:'');
+showBench('disk');
+}else{
+const up=j.nics.reduce((a,n)=>a+n.up,0),down=j.nics.reduce((a,n)=>a+n.down,0);
+S.innerHTML=`<div class="stat"><div class="k">上行速率</div><div class="v green">${fmtR(up)}</div></div><div class="stat"><div class="k">下行速率</div><div class="v green">${fmtR(down)}</div></div><div class="stat"><div class="k">累计接收</div><div class="v num">${fmtB(j.total_recv||0)}</div></div><div class="stat"><div class="k">累计发送</div><div class="v num">${fmtB(j.total_sent||0)}</div></div><div class="stat"><div class="k">连接数</div><div class="v num">${j.conns}</div></div>`;
+document.getElementById('sub').textContent=j.nics.map(n=>`${n.nic}: ↑${fmtR(n.up)} ↓${fmtR(n.down)}`).join(' · ')||'无网卡数据';
+renderHeader();
+renderBody();
+document.getElementById('netextra').innerHTML=`<h3 style="margin:12px 0 4px">TCP连接</h3><table class="t"><thead><tr><th>进程名</th><th>本地地址</th><th>远程地址</th><th>地址族</th><th>PID</th><th>状态</th></tr></thead><tbody>${(j.tcp||[]).map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${esc(c.laddr)}</td><td class="num">${esc(c.raddr)}</td><td>${esc(c.family)}</td><td class="num">${c.pid||''}</td><td>${esc(c.status)}</td></tr>`).join('')}</tbody></table><h3 style="margin:12px 0 4px">侦听端口</h3><table class="t"><thead><tr><th>进程名</th><th>监听地址</th><th>端口</th><th>地址族</th><th>防火墙</th><th>PID</th><th>协议</th></tr></thead><tbody>${(j.listen||[]).map(c=>`<tr><td>${esc(c.name)}</td><td class="num">${esc(c.laddr)}</td><td class="num">${c.port}</td><td>${esc(c.family)}</td><td>不放行</td><td class="num">${c.pid||''}</td><td>${esc(c.proto)}</td></tr>`).join('')}</tbody></table>`;
+const NW=j.hw||{},NN=NW.nics||[];
+const nrow=(k,v)=>`<span style="display:inline-block;min-width:260px;margin-right:12px">${k} <b class="num">${v}</b></span>`;
+const spd=n=>(n&&+n>0?(+n>=1000?((+n/1000)+' Gb/s'):(n+' Mb/s')):'-');
+document.getElementById('netinfo').style.display='';
+document.getElementById('netinfo').innerHTML=`<div class="model">出口 ${esc(NW.egress||'-')} · 网关 ${esc(NW.gateway||'-')} · DNS ${esc(NW.dns||'-')} <span class="mut">共 ${NN.length} 块网卡（档案快照 ${esc(NW.snapshot||'')}，地址/状态/速率为实时）</span></div>`
++(NN.length?NN.map(n=>`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee"><div><b>${esc(n.name||'')}</b> ${esc(n.model||'')} <span class="mut">${esc(n.role||'')}</span> <span style="color:${(n.isup===false||n.operstate==='down')?'#999':'#20a53a'}">${esc(n.operstate||(n.isup===false?'down':'up'))}</span></div><div>${nrow('IPv4',esc((n.ipv4||[]).join(' / ')||'-'))+nrow('IPv6',esc((n.ipv6||[]).join(' / ')||'-'))+nrow('MAC',esc(n.address||n.mac||'-'))+nrow('协商速率',spd(n.speed||n.live_speed))+nrow('双工',esc(n.duplex||'-'))+nrow('MTU',esc(n.mtu||n.live_mtu||'-'))+nrow('驱动',esc(n.live_driver||n.driver||'-'))+(n.pci?nrow('PCI',esc(n.pci)):'')+(n.ssid?nrow('WiFi',esc(n.ssid)):'')+nrow('收发累计',fmtB(n.io_recv||0)+' / '+fmtB(n.io_sent||0))}</div></div>`).join(''):`<div class="mut">未读到网卡信息</div>`)
++((NW.note)?`<div class="mut">${esc(NW.note)}</div>`:'');
+showBench('net');
+}
+}catch(e){if(manual)alert('加载失败: '+e)}
+}
+const BENCH_DURS=[10,30,50,70,90,110,130,150,170,190];
+function benchDur(k){try{const v=parseInt(localStorage.getItem('fnos_benchdur_'+k)||'10');return BENCH_DURS.indexOf(v)>=0?v:10}catch(e){return 10}}
+const BENCH_TXT={cpu:['🏃 系统运行速度测试','整数运算跑满所选时长，分数越高越快；自动记录当前性能模式/governor/平均MHz，方便对比省电/平衡/高性能三档效果','默认10秒'],mem:['💾 内存读写测速','32MB内存块循环写/读，跑满所选时长（前半写后半读），测完即释放，不占内存','默认10秒'],disk:['💽 硬盘读写测速','临时文件循环写（含落盘）/读，跑满所选时长，测完自动删除，不占空间','默认10秒'],net:['🌐 网络上下行测速','Cloudflare测速点：下行5MB/上行2MB','预计约5~15秒（看网速）']};
+function benchHist(k){try{return JSON.parse(localStorage.getItem('fnos_bench_'+k)||'[]')}catch(e){return[]}}
+function benchPush(k,t){try{const h=benchHist(k);h.unshift(t);localStorage.setItem('fnos_bench_'+k,JSON.stringify(h.slice(0,5)))}catch(e){}}
+function setBenchDur(k,v){try{localStorage.setItem('fnos_benchdur_'+k,String(parseInt(v)||10))}catch(e){}renderBench(k)}
+function renderBench(k,msg){const el=document.getElementById(k+'bench');if(!el)return;const T=BENCH_TXT[k],h=benchHist(k);const canDur=(k==='cpu'||k==='mem'||k==='disk');const dur=benchDur(k);const durSel=canDur?'<label class="mut" style="margin-left:6px">时长 <select id="benchdur_'+k+'" onchange="setBenchDur(\''+k+'\',this.value)" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px">'+BENCH_DURS.map(d=>'<option value="'+d+'"'+(d===dur?' selected':'')+'>'+d+'秒</option>').join('')+'</select></label>':'';el.innerHTML='<div class="model">'+T[0]+' <span class="mut">⏱ '+(canDur?('约'+dur+'秒'):T[2])+'</span></div><div class="mut">'+T[1]+'</div><div style="margin-top:6px"><button class="benchbtn" id="benchbtn_'+k+'" onclick="runBench(\''+k+'\')">开始测速（'+(canDur?('约'+dur+'秒'):T[2])+'）</button>'+durSel+' <button class="benchbtn" id="benchstop_'+k+'" onclick="stopBench(\''+k+'\')" style="display:none;background:#e33;border-color:#e33">⏹ 停止</button> <span id="benchmsg_'+k+'" class="mut">'+(msg||'')+'</span></div>'+(h.length?'<div class="benchhist">历史记录（最多5条，超出自动删旧）:<br>'+h.map(x=>esc(x)).join('<br>')+'</div>':'<div class="benchhist">暂无测速记录，点「开始测速」跑一次</div>')}
+const BENCH_CTL={};
+function stopBench(k){const c=BENCH_CTL[k];if(c){try{c.abort()}catch(e){}}}
+function showBench(k){const el=document.getElementById(k+'bench');if(!el)return;el.style.display='';if(!el.innerHTML)renderBench(k)}
+async function runBench(k){const b=document.getElementById('benchbtn_'+k),m=document.getElementById('benchmsg_'+k),st=document.getElementById('benchstop_'+k);const dur=(k==='cpu'||k==='mem'||k==='disk')?benchDur(k):0;if(b){b.disabled=true;b.textContent='测速中…'}if(st)st.style.display='';if(m)m.textContent='正在测速，请稍候（'+(dur?('约'+dur+'秒'):BENCH_TXT[k][2])+'），可点 ⏹ 停止';const ctl=new AbortController();BENCH_CTL[k]=ctl;try{const r=await fetch('/api/bench/'+k,{method:'POST',headers:{'Content-Type':'application/json'},body:dur?JSON.stringify({dur:dur}):'{}',signal:ctl.signal});const j=await r.json();let line='';if(j.ok){if(k==='cpu')line=j.at+' ['+j.mode+'|'+(j.governor||'-')+(j.capped?('|🔒'+j.cap_max_mhz+'MHz'):'')+'] 约'+(j.dur||dur)+'秒 '+j.ms+'ms '+j.kops+'kops AVG'+j.mhz_avg+'MHz';else if(k==='mem')line=j.at+' 约'+(j.dur||dur)+'秒 W'+j.write_mbs+'MB/s R'+j.read_mbs+'MB/s';else if(k==='disk')line=j.at+' 约'+(j.dur||dur)+'秒 W'+j.write_mbs+'MB/s R'+j.read_mbs+'MB/s '+(j.file||'');else if(k==='net')line=j.at+' DOWN'+j.down_mbps+'Mbps'+(j.up_mbps?' UP'+j.up_mbps+'Mbps':' UPFAIL');benchPush(k,line);renderBench(k,'✅ '+line)}else renderBench(k,'❌ '+(j.error||'测速失败'))}catch(e){if(e&&e.name==='AbortError'){renderBench(k,'⏹ 已停止（本次不记录）')}else renderBench(k,'❌ 测速失败: '+e)}finally{delete BENCH_CTL[k]}}
+let ivalSec=3,timer=null,paused=false;
+function startTimer(){if(timer)clearInterval(timer);if(!paused)timer=setInterval(()=>load(false),ivalSec*1000)}
+function setIval(v){ivalSec=+v;startTimer()}
+function togglePause(){paused=!paused;document.getElementById('pauseBtn').textContent=paused?'▶ 恢复刷新':'⏸ 停止刷新';startTimer()}
+// ===== 登录密码防护 =====
+let AUTH={required:false,authed:false};
+function showLogin(msg){
+if(timer){clearInterval(timer);timer=null}
+const m=document.getElementById('loginMask');m.style.display='flex';
+const e=document.getElementById('loginErr');if(e)e.textContent=msg||'';
+const p=document.getElementById('loginPwd');if(p){p.value='';setTimeout(()=>p.focus(),80)}
+}
+function hideLogin(){document.getElementById('loginMask').style.display='none'}
+async function doLogin(){
+const p=document.getElementById('loginPwd'),b=document.getElementById('loginBtn'),e=document.getElementById('loginErr');
+e.textContent='';b.disabled=true;b.textContent='登录中…';
+try{
+const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:p.value})});
+const j=await r.json();
+if(j.ok){hideLogin();startTimer();load(true);licPoll()}
+else{e.textContent=j.error||'密码错误';p.value='';p.focus()}
+}catch(err){e.textContent='网络异常，请重试'}
+finally{b.disabled=false;b.textContent='登 录'}
+}
+document.getElementById('loginPwd').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+async function authGate(){
+try{const r=await fetch('/api/auth/status',{cache:'no-store'});AUTH=await r.json()}catch(err){AUTH={required:false,authed:true}}
+if(AUTH.required&&!AUTH.authed){showLogin();return}
+hideLogin();load(true);startTimer();licPoll();setInterval(licPoll,10*60*1000);
+}
+authGate();
+async function licPoll(){try{const r=await fetch('/api/license-config',{cache:'no-store'});const j=await r.json();LIC=j;
+const dot=document.getElementById('licDot');if(dot)dot.style.display=(j.announcements&&j.announcements.length)?'':'none';
+const v=document.getElementById('licVer');if(v)v.textContent='v'+(j.version||'1.3.22')+(j.update_available?' ●':'');
+if(j.popup&&j.popup.length){try{const seen=JSON.parse(localStorage.getItem('fnos_ann_seen')||'[]');const fresh=j.popup.filter(a=>seen.indexOf(a.id)<0);if(fresh.length){const a=fresh[0];const el=document.getElementById('annPop');el.innerHTML=`<div style="display:flex;justify-content:space-between;align-items:center"><b>📢 ${esc(a.title||'公告')}</b><span onclick="dismissPop(${a.id})" style="cursor:pointer;color:#999">✕</span></div><div style="margin-top:6px">${a.content||''}</div>`;el.style.display='';}}catch(e){}}
+if(document.getElementById('annPanel').style.display!=='none')renderAnn();}catch(e){}}
+function renderAnn(){const el=document.getElementById('annPanel');const list=LIC.announcements||[];el.innerHTML=list.length?(`<b>📢 公告（${list.length}）</b>`+list.map(a=>`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed #eee"><div><b>${esc(a.title||'')}</b></div><div style="color:#666">${a.content||''}</div></div>`).join('')):'<span style="color:#999">暂无公告</span>';}
+function toggleAnn(){const el=document.getElementById('annPanel');if(el.style.display==='none'){renderAnn();el.style.display=''}else el.style.display='none'}
+function dismissPop(id){try{const seen=JSON.parse(localStorage.getItem('fnos_ann_seen')||'[]');seen.push(id);localStorage.setItem('fnos_ann_seen',JSON.stringify(seen))}catch(e){}document.getElementById('annPop').style.display='none'}
+async function checkVer(manual){try{const r=await fetch('/api/license-config',{cache:'no-store'});const j=await r.json();LIC=j;if(j.update_available){alert('发现新版本 v'+(j.latest||'')+'\n'+(j.changelog||'')+(j.download_url?('\n下载：'+j.download_url):''))}else if(manual){alert('当前已是最新版本 v'+(j.version||''))}}catch(e){if(manual)alert('版本检查失败，稍后重试')}}
+</script>
+<footer style="position:fixed;bottom:0;left:0;right:0;text-align:center;padding:6px;font-size:12px;color:#999;background:#fff;border-top:1px solid #eee;z-index:999">
+<a href="https://nav.88531.cn" target="_blank" rel="noopener">资享导航站</a> ·
+<a href="https://gitea.88531.cn/jinghui/fnos-resmon" target="_blank" rel="noopener">开源地址 (Gitea)</a>
+</footer>
+</html>

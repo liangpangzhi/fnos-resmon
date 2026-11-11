@@ -1,0 +1,203 @@
+#!/bin/bash
+# ============================================================
+# fnos-resmon - 飞牛资源监控 生命周期主脚本
+# 用法: main {start|stop|restart|status|log [N]}
+# 返回码: 0=成功/运行中  3=未运行  1=失败
+# ============================================================
+APP_NAME="${TRIM_APPNAME:-fnos-resmon}"
+VAR_DIR="${TRIM_PKGVAR}"
+APP_DIR="${TRIM_APPDEST}"
+PID_FILE="${VAR_DIR}/app.pid"
+LOG_FILE="${VAR_DIR}/server.log"
+LIB_DIR="${VAR_DIR}/lib"
+PORT="${TRIM_SERVICE_PORT:-7031}"
+LOG_MAX_BYTES=5242880
+
+if [ -z "${VAR_DIR}" ] || [ -z "${APP_DIR}" ]; then
+    echo "错误：TRIM_PKGVAR / TRIM_APPDEST 未设置" >&2
+    exit 1
+fi
+
+say() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+}
+
+find_python() {
+    for p in /usr/bin/python3 /usr/local/bin/python3 python3 python3.12 python3.11 python3.10 python3.9; do
+        if command -v "$p" >/dev/null 2>&1; then
+            command -v "$p"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# PID 文件残留且 PID 被系统复用时不能凭 PID 就 kill，必须确认命令行是本应用的 app.py
+pid_is_ours() {
+    local pid="$1"
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null || return 1
+    [ -r "/proc/$pid/cmdline" ] || return 0
+    local cmd
+    cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)
+    case "$cmd" in
+        *app.py*) return 0 ;;
+    esac
+    return 1
+}
+
+read_pid() {
+    [ -f "$PID_FILE" ] || return 1
+    tr -d '[:space:]' < "$PID_FILE"
+}
+
+is_running() {
+    local pid
+    pid=$(read_pid) || return 1
+    pid_is_ours "$pid"
+}
+
+# 内置 psutil（cp36-abi3 wheel）离线解压到应用数据目录，幂等
+ensure_psutil() {
+    [ -d "${LIB_DIR}/psutil" ] && return 0
+    mkdir -p "${LIB_DIR}" 2>/dev/null || true
+    local whl
+    whl=$(ls "${APP_DIR}"/py/wheels/psutil-*.whl 2>/dev/null | head -n 1)
+    if [ -z "$whl" ]; then
+        say "警告：未找到内置 psutil wheel"
+        return 1
+    fi
+    "$PYTHON" - "$whl" "${LIB_DIR}" <<'PYEOF' >> "$LOG_FILE" 2>&1
+import sys, zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PYEOF
+    if [ -d "${LIB_DIR}/psutil" ]; then
+        say "内置依赖 psutil 已解压就绪"
+        return 0
+    fi
+    say "警告：psutil 解压失败"
+    return 1
+}
+
+port_ready() {
+    "$PYTHON" - "$1" <<'PYEOF' >/dev/null 2>&1
+import socket, sys
+s = socket.socket()
+s.settimeout(1)
+sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)
+PYEOF
+}
+
+start() {
+    if is_running; then
+        exit 0
+    fi
+    mkdir -p "${VAR_DIR}" 2>/dev/null || true
+    if [ ! -f "$APP_DIR/app.py" ]; then
+        echo "错误：未找到 app.py（$APP_DIR/app.py）" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    fi
+    PYTHON=$(find_python) || {
+        echo "错误：系统中未找到 python3，无法启动资源监控服务" > "$TRIM_TEMP_LOGFILE"
+        exit 1
+    }
+    cd "$APP_DIR" || { echo "错误：无法进入应用目录 $APP_DIR" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+
+    ensure_psutil
+
+    # ---- 运行参数：与官方容器 compose 保持一致 ----
+    # secrets 优先复用宿主机上既有的 /root/.fnos_resmon_* 文件（原容器用户无需重新配置）
+    HUB_KEY_FILE="${VAR_DIR}/hub_key"
+    [ -f /root/.fnos_resmon_hub_key ] && HUB_KEY_FILE="/root/.fnos_resmon_hub_key"
+    PERF_FILE="${VAR_DIR}/perf_mode.json"
+    [ -f /root/.fnos_resmon_perf.json ] && PERF_FILE="/root/.fnos_resmon_perf.json"
+    LOGIN_PASSWORD_FILE="${VAR_DIR}/login_password"
+    [ -f /root/.fnos_resmon_password ] && LOGIN_PASSWORD_FILE="/root/.fnos_resmon_password"
+
+    export PORT
+    export PROCFS_PATH="/proc"
+    export SITE_VERSION="1.3.22"
+    export HUB_URL="https://auth.88531.cn/api"
+    export HUB_PROJECT_ID="12"
+    export HUB_KEY_FILE PERF_FILE LOGIN_PASSWORD_FILE
+    export PYTHONPATH="${APP_DIR}/py/vendor:${LIB_DIR}"
+    export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+    export TZ="${TZ:-Asia/Shanghai}"
+    export MALLOC_ARENA_MAX=2
+    export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    if [ -f "$LOG_FILE" ] && [ "$(wc -c < "$LOG_FILE" 2>/dev/null || echo 0)" -gt "$LOG_MAX_BYTES" ]; then
+        mv -f "$LOG_FILE" "$LOG_FILE.1" 2>/dev/null || : > "$LOG_FILE"
+    fi
+
+    nohup "$PYTHON" "$APP_DIR/app.py" >> "$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+
+    local i=0
+    while [ $i -lt 24 ]; do
+        if port_ready "$PORT"; then
+            say "已启动 ${APP_NAME}${TRIM_APPVER:+ v$TRIM_APPVER}（端口 $PORT，pid $(read_pid)，python: $PYTHON）"
+            exit 0
+        fi
+        sleep 0.5
+        i=$((i + 1))
+    done
+
+    echo "错误：$APP_NAME 启动失败，请查看日志 $LOG_FILE" > "$TRIM_TEMP_LOGFILE"
+    tail -n 20 "$LOG_FILE" >> "$TRIM_TEMP_LOGFILE" 2>/dev/null
+    say "启动失败，详见 $LOG_FILE"
+    rm -f "$PID_FILE"
+    exit 1
+}
+
+stop() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid=$(read_pid)
+        if pid_is_ours "$pid"; then
+            kill -TERM "$pid" 2>/dev/null
+            local i=0
+            while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do
+                sleep 0.5
+                i=$((i + 1))
+            done
+            if pid_is_ours "$pid"; then
+                say "10 秒内未退出，强制结束"
+                kill -KILL "$pid" 2>/dev/null
+            fi
+            say "已停止 ${APP_NAME}（pid $pid）"
+        fi
+        rm -f "$PID_FILE"
+    fi
+    return 0
+}
+
+# 应用中心会周期性调用 status，只看退出码：此处不能有任何输出
+status() {
+    if is_running; then
+        exit 0
+    fi
+    rm -f "$PID_FILE"
+    exit 3
+}
+
+log() {
+    if [ -f "$LOG_FILE" ]; then
+        local n="${2:-100}"
+        case "$n" in ''|*[!0-9]*) n=100 ;; esac
+        tail -n "$n" "$LOG_FILE"
+    else
+        echo "暂无日志"
+    fi
+    exit 0
+}
+
+case "$1" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) say "重启 $APP_NAME"; stop; sleep 1; start ;;
+    status)  status ;;
+    log)     log "$@" ;;
+    '')      start ;;
+    *)       echo "用法: $0 {start|stop|restart|status|log}"; exit 1 ;;
+esac

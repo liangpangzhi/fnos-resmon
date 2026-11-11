@@ -1,0 +1,16 @@
+appname = fnos-resmon
+version = 1.3.22
+display_name = 飞牛资源监控
+desc = <b>飞牛资源监控</b>：实时查看 CPU、内存、磁盘 SMART、网络吞吐与温度、进程占用，支持历史趋势与性能模式开关，可设置登录密码防护。<br><br>本包为本地离线重打包（非官方发布）：内置运行依赖，无需 docker，以 fnOS 应用身份直接运行，运行数据存放在应用数据目录。
+platform = x86
+source = thirdparty
+maintainer = jinghui
+distributor = jinghui
+os_min_version = 0.9.0
+ctl_stop = true
+desktop_uidir = ui
+desktop_applaunchname = fnos-resmon.Application
+service_port = 7031
+checkport = true
+changelog = v1.3.22 本地重打包版：<br>① 去除 docker 依赖，改为 fnOS 原生进程运行，运行参数与原容器一致（host 网络与特权、直读宿主 /proc 与 /sys）；<br>② 内置 flask 全套依赖与 psutil(abi3)，安装与运行全程离线；<br>③ 自动复用已有的 /root/.fnos_resmon_hub_key、/root/.fnos_resmon_password、/root/.fnos_resmon_perf.json，原有授权与登录密码继续生效。
+checksum = {{CHECKSUM}}

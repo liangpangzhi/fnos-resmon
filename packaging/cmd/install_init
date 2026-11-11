@@ -1,0 +1,25 @@
+#!/bin/bash
+# ============================================================
+# fnos-resmon 安装前检查：确认 python3 与关键系统工具可用
+# ============================================================
+VAR_DIR="${TRIM_PKGVAR}"
+APP_DIR="${TRIM_APPDEST}"
+mkdir -p "$VAR_DIR" 2>/dev/null || true
+
+PY=""
+for p in /usr/bin/python3 /usr/local/bin/python3 python3 python3.12 python3.11 python3.10 python3.9; do
+    if command -v "$p" >/dev/null 2>&1; then PY=$(command -v "$p"); break; fi
+done
+if [ -z "$PY" ]; then
+    echo "错误：系统中未找到 python3，无法安装飞牛资源监控" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+echo "python3 环境检查通过: $PY"
+
+# 运行所需的宿主工具（缺少只提示，不阻断安装）
+for bin in ip ss lscpu smartctl nsenter sync; do
+    command -v "$bin" >/dev/null 2>&1 || echo "提示：系统中缺少 $bin，对应指标将不可用"
+done
+
+echo "fnos-resmon 安装前检查完成"
+exit 0

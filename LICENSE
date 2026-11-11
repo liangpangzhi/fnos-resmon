@@ -1,0 +1,9 @@
+fnos-resmon fpk 本地重打包声明
+
+本安装包内的应用代码版权归原作者 jinghui 所有，来源仓库：
+https://gitea.88531.cn/jinghui/fnos-resmon  (tag v1.3.22)
+
+本 fpk 仅为本地离线重打包（内置 Python 依赖、以 fnOS 原生进程方式运行），
+未修改任何业务逻辑，亦不代表原作者发布的官方安装包。
+第三方依赖：Flask / Werkzeug / Jinja2 / MarkupSafe / itsdangerous / click / blinker、
+psutil，均为 BSD-3-Clause 许可。

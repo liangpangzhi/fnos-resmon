@@ -73,6 +73,8 @@ vendor / psutil wheel 是否齐全。校验不过会以退出码 2 结束。
 
 ## 5. 安装
 
+**直接下载**：[Releases → v1.3.22 → `fnos-resmon_1.3.22_x86_64.fpk`](https://github.com/liangpangzhi/fnos-resmon/releases/download/v1.3.22/fnos-resmon_1.3.22_x86_64.fpk)
+
 1. fnOS 桌面 → 应用中心 → 手动安装 → 选择 `fnos-resmon_1.3.22_x86_64.fpk`
 2. 安装完成后桌面出现「飞牛资源监控」图标
 3. 已在旧版使用过的机器：`/root/.fnos_resmon_hub_key`、`/root/.fnos_resmon_password`、
